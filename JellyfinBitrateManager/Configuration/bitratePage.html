@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<title>Bitrate Manager</title>
+	</head>
+	<body>
+		<div id="BitrateManagerPage" data-role="page" class="page type-interior pluginConfigurationPage" data-require="emby-input,emby-button">
+			<style>
+				#BitrateManagerPage .bmTable {
+					width: 100%;
+					max-width: 54em;
+					border-collapse: collapse;
+					margin: 1.5em 0;
+				}
+
+				#BitrateManagerPage .bmTable th,
+				#BitrateManagerPage .bmTable td {
+					padding: 0.5em 0.75em;
+					text-align: left;
+					border-bottom: 1px solid rgba(128, 128, 128, 0.3);
+				}
+
+				#BitrateManagerPage .bmTable td:first-child {
+					overflow-wrap: anywhere;
+				}
+
+				#BitrateManagerPage .bmLimitCell {
+					width: 14em;
+				}
+
+				#BitrateManagerPage .bmBadge {
+					display: inline-block;
+					margin-left: 0.6em;
+					padding: 0.1em 0.5em;
+					border: 1px solid currentColor;
+					border-radius: 0.3em;
+					font-size: 0.75em;
+					opacity: 0.75;
+				}
+
+				#BitrateManagerPage .bmTable input[aria-invalid='true'] {
+					border-color: #cc3333;
+				}
+
+				#BitrateManagerPage #bmSave:disabled {
+					opacity: 0.5;
+					cursor: default;
+				}
+
+				#BitrateManagerPage .bmChanged td {
+					background: rgba(0, 164, 220, 0.15);
+				}
+			</style>
+			<div data-role="content">
+				<div class="content-primary">
+					<h1>Bitrate Manager</h1>
+					<div class="fieldDescription">
+						Per-stream bitrate limit for each user's out of network devices. Leave a limit blank (or 0) to use the server default.
+						<div>Server default: <strong id="bmServerDefault">-</strong> (Dashboard &rarr; Playback &rarr; Streaming)</div>
+					</div>
+
+					<form id="bmForm" novalidate>
+						<table class="bmTable">
+							<thead>
+								<tr>
+									<th scope="col">User</th>
+									<th scope="col" class="bmLimitCell">Internet streaming bitrate limit (Mbps)</th>
+								</tr>
+							</thead>
+							<tbody id="bmUsers"></tbody>
+						</table>
+						<div id="bmStatus" class="fieldDescription" role="status"></div>
+						<div>
+							<button id="bmSave" is="emby-button" type="submit" class="raised button-submit block emby-button" disabled>
+								<span>Save</span>
+							</button>
+						</div>
+					</form>
+				</div>
+			</div>
+			<script type="text/javascript">
+				(function () {
+					var BPS_PER_MBPS = 1000000;
+					var MAX_BPS = 2147483647;
+
+					var page = document.querySelector('#BitrateManagerPage');
+					var tbody = page.querySelector('#bmUsers');
+					var status = page.querySelector('#bmStatus');
+					var saveButton = page.querySelector('#bmSave');
+
+					// One entry per user: { user, input, row }
+					var rows = [];
+
+					function toMbpsText(bps) {
+						return bps > 0 ? String(bps / BPS_PER_MBPS) : '';
+					}
+
+					// Returns bits per second, or null when the input isn't a valid limit.
+					function readLimit(input) {
+						if (input.validity.badInput) {
+							return null;
+						}
+
+						var text = input.value.trim();
+						if (!text) {
+							return 0;
+						}
+
+						var bps = Math.round(Number(text) * BPS_PER_MBPS);
+						return bps >= 0 && bps <= MAX_BPS ? bps : null;
+					}
+
+					function getChanges() {
+						return rows.filter(function (entry) {
+							return readLimit(entry.input) !== entry.user.RemoteClientBitrateLimit;
+						});
+					}
+
+					function refresh() {
+						var changes = getChanges();
+						var invalid = changes.filter(function (entry) {
+							return readLimit(entry.input) === null;
+						});
+
+						rows.forEach(function (entry) {
+							entry.row.classList.toggle('bmChanged', changes.indexOf(entry) !== -1);
+							entry.input.setAttribute('aria-invalid', String(invalid.indexOf(entry) !== -1));
+						});
+
+						saveButton.disabled = !changes.length || invalid.length > 0;
+						if (invalid.length) {
+							var names = invalid.map(function (entry) {
+								return entry.user.Name;
+							});
+							status.textContent = 'Enter a number from 0 to 2147 Mbps for: ' + names.join(', ');
+						} else {
+							status.textContent = changes.length ? 'Unsaved changes: ' + changes.length : '';
+						}
+					}
+
+					function addBadge(cell, text) {
+						var badge = document.createElement('span');
+						badge.className = 'bmBadge';
+						badge.textContent = text;
+						cell.appendChild(badge);
+					}
+
+					function renderUser(user, placeholder) {
+						var row = document.createElement('tr');
+
+						var nameCell = document.createElement('td');
+						nameCell.appendChild(document.createTextNode(user.Name));
+						if (user.IsAdministrator) {
+							addBadge(nameCell, 'Admin');
+						}
+						if (user.IsDisabled) {
+							addBadge(nameCell, 'Disabled');
+						}
+						row.appendChild(nameCell);
+
+						var input = document.createElement('input');
+						input.type = 'number';
+						input.className = 'emby-input';
+						input.min = '0';
+						input.max = '2147';
+						input.step = 'any';
+						input.inputMode = 'decimal';
+						input.placeholder = placeholder;
+						input.value = toMbpsText(user.RemoteClientBitrateLimit);
+						input.setAttribute('aria-label', 'Internet streaming bitrate limit (Mbps) for ' + user.Name);
+						input.addEventListener('input', refresh);
+
+						var limitCell = document.createElement('td');
+						limitCell.className = 'bmLimitCell';
+						limitCell.appendChild(input);
+						row.appendChild(limitCell);
+
+						tbody.appendChild(row);
+						rows.push({ user: user, input: input, row: row });
+					}
+
+					function load() {
+						Dashboard.showLoadingMsg();
+						return ApiClient.getJSON(ApiClient.getUrl('BitrateManager/Users'))
+							.then(function (data) {
+								var serverLimit = data.ServerRemoteClientBitrateLimit;
+								var serverText = serverLimit > 0 ? toMbpsText(serverLimit) + ' Mbps' : 'Unlimited';
+								page.querySelector('#bmServerDefault').textContent = serverText;
+
+								rows = [];
+								tbody.textContent = '';
+								data.Users.forEach(function (user) {
+									renderUser(user, 'Default (' + serverText + ')');
+								});
+								refresh();
+							})
+							.catch(function () {
+								status.textContent = 'Could not load users. Check the Jellyfin log for details.';
+							})
+							.finally(function () {
+								Dashboard.hideLoadingMsg();
+							});
+					}
+
+					function save() {
+						// Save stays disabled while any input is invalid, so every limit here is a number.
+						var updates = getChanges().map(function (entry) {
+							return {
+								UserId: entry.user.UserId,
+								RemoteClientBitrateLimit: readLimit(entry.input),
+							};
+						});
+
+						// Blocks a second submit while this one is in flight.
+						saveButton.disabled = true;
+						Dashboard.showLoadingMsg();
+						ApiClient.ajax({
+							type: 'POST',
+							url: ApiClient.getUrl('BitrateManager/Users'),
+							data: JSON.stringify(updates),
+							contentType: 'application/json',
+						}).then(
+							function () {
+								return load().then(function () {
+									Dashboard.alert('Bitrate limits saved.');
+								});
+							},
+							function () {
+								Dashboard.hideLoadingMsg();
+								refresh();
+								status.textContent = 'Could not save the limits. Check the Jellyfin log for details.';
+							}
+						);
+					}
+
+					page.addEventListener('pageshow', load);
+					page.querySelector('#bmForm').addEventListener('submit', function (e) {
+						e.preventDefault();
+						if (!saveButton.disabled) {
+							save();
+						}
+						return false;
+					});
+				})();
+			</script>
+		</div>
+	</body>
+</html>

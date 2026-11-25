@@ -1,0 +1,12 @@
+{
+	"category": "Administration",
+	"changelog": "Initial release.",
+	"description": "Adds a dashboard page that lists every user and lets administrators view and edit each user's internet streaming bitrate limit.",
+	"guid": "0a10f5ce-80b8-4ae8-8b3a-f691de1cf00d",
+	"name": "Bitrate Manager",
+	"overview": "View and edit internet streaming bitrate limits for all users in one list",
+	"owner": "EvanTrow",
+	"targetAbi": "12.0.0.0",
+	"timestamp": "2026-11-25T17:18:58Z",
+	"version": "1.0.0.0"
+}
